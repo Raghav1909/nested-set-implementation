@@ -4,9 +4,9 @@ from . import models, schemas
 from .database import get_db
 from sqlalchemy.orm import Session
 
-router = APIRouter(tags=["Nodes"], prefix="/api")
+router = APIRouter(tags=["Nodes"], prefix="/api/nodes")
 
-@router.get("/")
+@router.get("/", response_model=schemas.TreeView)
 def build_tree_view(db: Session = Depends(get_db)):
     root = db.query(models.Node).filter( models.Node.left == 1).first()
     
@@ -30,12 +30,15 @@ def build_tree_view(db: Session = Depends(get_db)):
         return {
             "id": node.id,
             "name": node.name,
+            "left": node.left,
+            "right": node.right,
             "children": children_nodes
         }
     
     tree = build_tree(root)
     
     return tree
+
 
 @router.post("/")
 def add_node(node: schemas.NodeCreate, db: Session = Depends(get_db)):
@@ -87,6 +90,7 @@ def update_node(node_id: int, node: schemas.NodeUpdate, db: Session = Depends(ge
     
     return JSONResponse(status_code=status.HTTP_200, content={"message": "Node updated successfully"})
 
+
 @router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_subtree(node_id: int, db: Session = Depends(get_db)):
     node = db.query(models.Node).filter(models.Node.id == node_id).first()
@@ -104,7 +108,7 @@ def delete_subtree(node_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-@router.delete("/{node_id}/elevate", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{node_id}/delete-elevate", status_code=status.HTTP_204_NO_CONTENT)
 def delete_node_and_elevate_decendants(node_id: int, db: Session = Depends(get_db)):
     node = db.query(models.Node).filter(models.Node.id == node_id).first()
     
@@ -118,3 +122,63 @@ def delete_node_and_elevate_decendants(node_id: int, db: Session = Depends(get_d
     db.query(models.Node).filter(models.Node.right > node.right).update({models.Node.right: models.Node.right - 2}, synchronize_session=False)
     db.query(models.Node).filter(models.Node.left > node.right).update({models.Node.left: models.Node.left - 2}, synchronize_session=False)
     db.commit()
+
+
+@router.put("/move/{node_id}", status_code=status.HTTP_200_OK)
+def move_subtree(node_id: int, new_parent_id: int, db: Session = Depends(get_db)):
+    # Fetch the origin node
+    origin_node = db.query(models.Node).filter(models.Node.id == node_id).first()
+    if not origin_node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
+    
+    # Fetch the new parent node
+    new_parent_node = db.query(models.Node).filter(models.Node.id == new_parent_id).first()
+    if not new_parent_node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="New parent node not found")
+    
+    # Check if we are trying to move the node under itself
+    if new_parent_node.left >= origin_node.left and new_parent_node.right <= origin_node.right:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot move subtree under itself")
+    
+    origin_lft = origin_node.left
+    origin_rgt = origin_node.right
+    new_parent_rgt = new_parent_node.right
+    subtree_width = origin_rgt - origin_lft + 1
+
+    if new_parent_rgt < origin_lft:
+        db.query(models.Node).filter(models.Node.left >= new_parent_rgt, models.Node.left < origin_lft).update({
+            models.Node.left: models.Node.left + subtree_width
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.right >= new_parent_rgt, models.Node.right < origin_lft).update({
+            models.Node.right: models.Node.right + subtree_width
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.left >= origin_lft, models.Node.left <= origin_rgt).update({
+            models.Node.left: models.Node.left + (new_parent_rgt - origin_lft)
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.right >= origin_lft, models.Node.right <= origin_rgt).update({
+            models.Node.right: models.Node.right + (new_parent_rgt - origin_lft)
+        }, synchronize_session=False)
+        
+    elif new_parent_rgt > origin_rgt:
+        db.query(models.Node).filter(models.Node.left > origin_rgt, models.Node.left < new_parent_rgt).update({
+            models.Node.left: models.Node.left - subtree_width
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.right > origin_rgt, models.Node.right < new_parent_rgt).update({
+            models.Node.right: models.Node.right - subtree_width
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.left >= origin_lft, models.Node.left <= origin_rgt).update({
+            models.Node.left: models.Node.left + (new_parent_rgt - origin_rgt - 1)
+        }, synchronize_session=False)
+        
+        db.query(models.Node).filter(models.Node.right >= origin_lft, models.Node.right <= origin_rgt).update({
+            models.Node.right: models.Node.right + (new_parent_rgt - origin_rgt - 1)
+        }, synchronize_session=False)
+    
+    db.commit()
+
+    return {"message": "Subtree moved successfully"}
