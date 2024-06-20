@@ -1,4 +1,4 @@
-from database import Base
+from app.database import Base
 from sqlalchemy import Column, Integer, String
 
 
@@ -7,4 +7,3 @@ class Node(Base):
     name = Column(String, nullable=False)
     left = Column(Integer, nullable=False)
     right = Column(Integer, nullable=False)
-    tree_id = Column(String, nullable=False)
