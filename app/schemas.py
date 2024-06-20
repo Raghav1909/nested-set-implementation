@@ -13,3 +13,8 @@ class NodeCreate(NodeBase):
 class NodeOut(BaseModel):
     id: int
     name: str
+
+
+class NodeUpdate(BaseModel):
+    id: int
+    name: str

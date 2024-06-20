@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 router = APIRouter(tags=["Nodes"], prefix="/api")
 
 @router.get("/")
-def build_graph(db: Session = Depends(get_db)):
+def build_tree_view(db: Session = Depends(get_db)):
     root = db.query(models.Node).filter( models.Node.left == 1).first()
     
     if not root:
@@ -73,3 +73,48 @@ def add_node(node: schemas.NodeCreate, db: Session = Depends(get_db)):
     db.refresh(new_node)
     
     return JSONResponse(status_code=status.HTTP_201_CREATED, content={"id": new_node.id})
+
+
+@router.put("/{node_id}", status_code=status.HTTP_200_OK)
+def update_node(node_id: int, node: schemas.NodeUpdate, db: Session = Depends(get_db)):
+    node_to_update = db.query(models.Node).filter(models.Node.id == node_id).first()
+    
+    if not node_to_update:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
+    
+    node_to_update.name = node.name
+    db.commit()
+    
+    return JSONResponse(status_code=status.HTTP_200, content={"message": "Node updated successfully"})
+
+@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_subtree(node_id: int, db: Session = Depends(get_db)):
+    node = db.query(models.Node).filter(models.Node.id == node_id).first()
+    
+    if not node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
+    
+    width = node.right - node.left + 1
+    
+    db.query(models.Node).filter(models.Node.left >= node.left, models.Node.right <= node.right).delete()
+    db.commit()
+    
+    db.query(models.Node).filter(models.Node.right > node.right).update({models.Node.right: models.Node.right - width}, synchronize_session=False)
+    db.query(models.Node).filter(models.Node.left > node.right).update({models.Node.left: models.Node.left - width}, synchronize_session=False)
+    db.commit()
+
+
+@router.delete("/{node_id}/elevate", status_code=status.HTTP_204_NO_CONTENT)
+def delete_node_and_elevate_decendants(node_id: int, db: Session = Depends(get_db)):
+    node = db.query(models.Node).filter(models.Node.id == node_id).first()
+    
+    if not node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found")
+    
+    db.query(models.Node).filter(models.Node.left == node.left).delete()
+    db.commit()
+    
+    db.query(models.Node).filter(models.Node.left > node.left, models.Node.left < node.right).update({models.Node.left: models.Node.left - 1, models.Node.right: models.Node.right - 1}, synchronize_session=False)
+    db.query(models.Node).filter(models.Node.right > node.right).update({models.Node.right: models.Node.right - 2}, synchronize_session=False)
+    db.query(models.Node).filter(models.Node.left > node.right).update({models.Node.left: models.Node.left - 2}, synchronize_session=False)
+    db.commit()
